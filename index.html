@@ -1,1 +1,173 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Poll Example</title>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js"></script>
+  <style>
+    body {
+      font-family: "Poppins", sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background: linear-gradient(135deg, #89f7fe, #66a6ff);
+    }
+
+    .poll-container {
+      background: rgba(255, 255, 255, 0.2);
+      backdrop-filter: blur(15px);
+      border-radius: 20px;
+      padding: 30px;
+      width: 320px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+      text-align: center;
+    }
+
+    .poll-title {
+      font-size: 20px;
+      font-weight: bold;
+      margin-bottom: 20px;
+      color: #fff;
+    }
+
+    .poll-option {
+      position: relative;
+      margin: 10px 0;
+      padding: 12px;
+      border-radius: 15px;
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      color: #fff;
+      font-size: 16px;
+      cursor: pointer;
+      overflow: hidden;
+    }
+
+    .poll-option.disabled {
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
+    .poll-option span {
+      position: relative;
+      z-index: 2;
+    }
+
+    .poll-bar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 100%;
+      background: rgba(255, 255, 255, 0.3);
+      border-radius: 15px;
+      z-index: 1;
+      width: 0%;
+      transition: width 0.6s ease;
+    }
+  </style>
+</head>
+<body>
+  <div class="poll-container">
+    <div class="poll-title">Which framework do you prefer?</div>
+    <div class="poll-option" data-option="React">
+      <div class="poll-bar"></div>
+      <span>React</span>
+    </div>
+    <div class="poll-option" data-option="Vue">
+      <div class="poll-bar"></div>
+      <span>Vue</span>
+    </div>
+    <div class="poll-option" data-option="Angular">
+      <div class="poll-bar"></div>
+      <span>Angular</span>
+    </div>
+  </div>
+
+  <script type="module">
+    // ✅ Firebase Config
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT.firebaseapp.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT.appspot.com",
+      messagingSenderId: "YOUR_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
+
+    // ✅ Init Firebase
+    const app = firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    const auth = firebase.auth();
+
+    // ✅ Anonymous login
+    auth.signInAnonymously().catch(console.error);
+
+    const pollOptions = document.querySelectorAll(".poll-option");
+
+    // Fetch & update UI
+    async function updateResults() {
+      const snapshot = await db.collection("poll").doc("framework").get();
+      if (!snapshot.exists) return;
+
+      const data = snapshot.data();
+      const totalVotes = Object.values(data.votes || {}).reduce((a, b) => a + b, 0);
+
+      pollOptions.forEach(option => {
+        const optName = option.dataset.option;
+        const votes = (data.votes && data.votes[optName]) || 0;
+        const percent = totalVotes ? (votes / totalVotes) * 100 : 0;
+
+        option.querySelector(".poll-bar").style.width = percent + "%";
+        option.querySelector("span").innerText = `${optName} (${percent.toFixed(1)}%)`;
+      });
+
+      // Disable if already voted
+      const userId = localStorage.getItem("pollVoted");
+      if (userId) {
+        pollOptions.forEach(opt => opt.classList.add("disabled"));
+      }
+    }
+
+    // Click Event
+    pollOptions.forEach(option => {
+      option.addEventListener("click", async () => {
+        const userId = localStorage.getItem("pollVoted");
+        if (userId) return; // already voted
+
+        const optName = option.dataset.option;
+        const ref = db.collection("poll").doc("framework");
+
+        await db.runTransaction(async (transaction) => {
+          const doc = await transaction.get(ref);
+          if (!doc.exists) {
+            transaction.set(ref, { votes: { React: 0, Vue: 0, Angular: 0 }, users: [] });
+          }
+          const data = doc.data();
+          const newCount = (data.votes[optName] || 0) + 1;
+          transaction.update(ref, {
+            [`votes.${optName}`]: newCount,
+            users: firebase.firestore.FieldValue.arrayUnion(auth.currentUser.uid)
+          });
+        });
+
+        // Save locally
+        localStorage.setItem("pollVoted", auth.currentUser.uid);
+
+        updateResults();
+      });
+    });
+
+    // Real-time updates
+    db.collection("poll").doc("framework").onSnapshot(() => {
+      updateResults();
+    });
+
+    updateResults();
+  </script>
+</body>
+</html>
